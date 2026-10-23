@@ -42,6 +42,11 @@
       margin-top: 0.5rem;
     }
 
+    button:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+
     .btn-primary {
       background: #38bdf8;
       color: #0f172a;
@@ -121,11 +126,6 @@
 
 <body>
 
-  <script>
-    const API =
-      "https://xrn90564rk.execute-api.ap-south-1.amazonaws.com/prod";
-  </script>
-
   <header>
     <h2>Student Dashboard</h2>
     <div>
@@ -185,6 +185,9 @@
   </div>
 
   <script>
+    const API =
+      "https://xrn90564rk.execute-api.ap-south-1.amazonaws.com/prod";
+
     const idToken = () => sessionStorage.getItem("id_token");
 
     document.getElementById("user-name").textContent =
@@ -197,9 +200,12 @@
     let lastScanTime = 0;
     let lastDebugMessage = 0;
     let framesProcessed = 0;
+    let barcodeDetector = null;
+    let scanGeneration = 0;
 
     const video = document.getElementById("video");
     const canvas = document.getElementById("canvas");
+
     const context = canvas.getContext("2d", {
       willReadFrequently: true
     });
@@ -221,6 +227,29 @@
       location.href = "index.html";
     }
 
+    function stopCamera(showMessage = true) {
+      scanning = false;
+      scanGeneration++;
+
+      if (animationId !== null) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+      }
+
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+
+      video.srcObject = null;
+      document.getElementById("start-btn").disabled = false;
+
+      if (showMessage) {
+        scanMsg("Camera stopped.");
+        debugMsg("Camera stopped.");
+      }
+    }
+
     async function startCamera() {
       if (scanning) {
         scanMsg("Camera is already running.");
@@ -229,15 +258,10 @@
 
       if (!navigator.mediaDevices ||
           !navigator.mediaDevices.getUserMedia) {
-        scanMsg("Camera API unavailable. Open the HTTPS website.",
-          "#f87171");
-        return;
-      }
-
-      if (typeof jsQR !== "function") {
-        scanMsg("QR library failed to load. Check internet and reload.",
-          "#f87171");
-        debugMsg("jsQR library is unavailable.");
+        scanMsg(
+          "Camera API unavailable. Open the HTTPS website.",
+          "#f87171"
+        );
         return;
       }
 
@@ -246,12 +270,39 @@
         return;
       }
 
+      // Set up Chrome's native QR detector where supported.
+      barcodeDetector = null;
+
+      try {
+        if ("BarcodeDetector" in window) {
+          barcodeDetector = new BarcodeDetector({
+            formats: ["qr_code"]
+          });
+        }
+      } catch (error) {
+        console.warn("Native detector unavailable:", error);
+      }
+
+      // jsQR is our fallback.
+      if (!barcodeDetector && typeof jsQR !== "function") {
+        scanMsg(
+          "QR scanner failed to load. Check internet and reload.",
+          "#f87171"
+        );
+        debugMsg("Neither native detector nor jsQR is available.");
+        return;
+      }
+
       document.getElementById("start-btn").disabled = true;
+
       scanMsg("Requesting camera permission...");
       debugMsg("Opening camera...");
 
       try {
         stopCamera(false);
+
+        // stopCamera increments the generation counter.
+        const thisScan = scanGeneration;
 
         stream = await navigator.mediaDevices.getUserMedia({
           audio: false,
@@ -261,6 +312,12 @@
             height: { ideal: 720 }
           }
         });
+
+        if (thisScan !== scanGeneration) {
+          stream.getTracks().forEach(track => track.stop());
+          stream = null;
+          return;
+        }
 
         video.srcObject = stream;
 
@@ -296,6 +353,10 @@
 
         await video.play();
 
+        if (thisScan !== scanGeneration) {
+          return;
+        }
+
         scanning = true;
         scanDone = false;
         framesProcessed = 0;
@@ -304,14 +365,20 @@
 
         document.getElementById("start-btn").disabled = false;
 
-        scanMsg("Camera ready. Point at the QR code and hold steady.",
-          "#38bdf8");
-
-        debugMsg(
-          "Video size: " + video.videoWidth + " x " + video.videoHeight
+        scanMsg(
+          "Camera ready. Point at the QR code and hold steady.",
+          "#38bdf8"
         );
 
-        animationId = requestAnimationFrame(tick);
+        debugMsg(
+          "Video: " + video.videoWidth + "x" + video.videoHeight +
+          " | Detector: " +
+          (barcodeDetector ? "Chrome native + jsQR" : "jsQR fallback")
+        );
+
+        animationId = requestAnimationFrame(
+          timestamp => tick(timestamp, thisScan)
+        );
 
       } catch (error) {
         stopCamera(false);
@@ -332,62 +399,91 @@
       }
     }
 
-    function stopCamera(showMessage = true) {
-      scanning = false;
-
-      if (animationId !== null) {
-        cancelAnimationFrame(animationId);
-        animationId = null;
+    async function tick(timestamp, thisScan) {
+      if (!scanning || thisScan !== scanGeneration) {
+        return;
       }
 
-      if (stream) {
-        stream.getTracks().forEach(track => track.stop());
-        stream = null;
-      }
+      try {
+        if (
+          video.readyState >= 2 &&
+          video.videoWidth > 0 &&
+          timestamp - lastScanTime >= 100
+        ) {
+          lastScanTime = timestamp;
 
-      video.srcObject = null;
-      document.getElementById("start-btn").disabled = false;
-
-      if (showMessage) {
-        scanMsg("Camera stopped.");
-        debugMsg("Camera stopped.");
-      }
-    }
-
-    function tick(timestamp) {
-      if (!scanning) return;
-
-      if (video.readyState >= 2 && video.videoWidth > 0 &&
-          timestamp - lastScanTime >= 100) {
-
-        lastScanTime = timestamp;
-
-        try {
-          // Limit image size to reduce processing on phones.
-          const scale = Math.min(1, 900 / video.videoWidth);
+          // Resize large frames for faster mobile processing.
+          const scale = Math.min(1, 1200 / video.videoWidth);
 
           canvas.width = Math.round(video.videoWidth * scale);
           canvas.height = Math.round(video.videoHeight * scale);
 
           context.drawImage(
-            video, 0, 0, canvas.width, canvas.height
-          );
-
-          const image = context.getImageData(
-            0, 0, canvas.width, canvas.height
+            video,
+            0,
+            0,
+            canvas.width,
+            canvas.height
           );
 
           framesProcessed++;
 
-          const code = jsQR(
-            image.data,
-            image.width,
-            image.height,
-            { inversionAttempts: "attemptBoth" }
-          );
+          let decodedText = null;
 
-          // Update visible diagnostics every two seconds.
-          if (!code && timestamp - lastDebugMessage > 2000) {
+          // Method 1: Chrome's native QR detector.
+          if (barcodeDetector) {
+            try {
+              const results = await barcodeDetector.detect(canvas);
+
+              if (
+                scanning &&
+                thisScan === scanGeneration &&
+                results.length > 0 &&
+                results[0].rawValue
+              ) {
+                decodedText = results[0].rawValue;
+              }
+            } catch (error) {
+              console.warn("Native QR detection failed:", error);
+            }
+          }
+
+          if (!scanning || thisScan !== scanGeneration) {
+            return;
+          }
+
+          // Method 2: jsQR fallback.
+          if (!decodedText && typeof jsQR === "function") {
+            try {
+              const image = context.getImageData(
+                0,
+                0,
+                canvas.width,
+                canvas.height
+              );
+
+              const result = jsQR(
+                image.data,
+                image.width,
+                image.height,
+                {
+                  inversionAttempts: "attemptBoth"
+                }
+              );
+
+              if (result && result.data) {
+                decodedText = result.data;
+              }
+            } catch (error) {
+              console.warn("jsQR detection failed:", error);
+            }
+          }
+
+          // Display diagnostics every two seconds.
+          if (
+            !decodedText &&
+            timestamp - lastDebugMessage > 2000
+          ) {
             lastDebugMessage = timestamp;
 
             scanMsg(
@@ -397,33 +493,50 @@
 
             debugMsg(
               "Frames: " + framesProcessed +
-              " | Image: " + image.width + "x" + image.height +
+              " | Image: " + canvas.width + "x" + canvas.height +
+              " | Detector: " +
+              (barcodeDetector ? "Chrome + jsQR" : "jsQR only") +
               " | QR not detected yet"
             );
           }
 
-          if (code && code.data && !scanDone) {
+          // QR decoded: process attendance once.
+          if (decodedText && !scanDone) {
             scanDone = true;
             scanning = false;
 
-            stopCamera(false);
+            if (animationId !== null) {
+              cancelAnimationFrame(animationId);
+              animationId = null;
+            }
+
+            if (stream) {
+              stream.getTracks().forEach(track => track.stop());
+              stream = null;
+            }
+
+            video.srcObject = null;
 
             debugMsg("QR decoded successfully. Sending to AWS...");
-            scanMsg("QR detected! Processing attendance...", "#f59e0b");
+            scanMsg(
+              "QR detected! Processing attendance...",
+              "#f59e0b"
+            );
 
-            handleQRData(code.data);
+            await handleQRData(decodedText);
             return;
           }
-
-        } catch (error) {
-          console.error("Scanner error:", error);
-          scanMsg("Scanner error: " + error.message, "#f87171");
-          debugMsg("Frame processing failed: " + error.message);
         }
+      } catch (error) {
+        console.error("Scanner error:", error);
+        scanMsg("Scanner error: " + error.message, "#f87171");
+        debugMsg("Frame processing failed: " + error.message);
       }
 
-      if (scanning) {
-        animationId = requestAnimationFrame(tick);
+      if (scanning && thisScan === scanGeneration) {
+        animationId = requestAnimationFrame(
+          nextTimestamp => tick(nextTimestamp, thisScan)
+        );
       }
     }
 
@@ -434,15 +547,21 @@
         try {
           payload = JSON.parse(raw);
         } catch {
-          throw new Error("QR decoded, but its content is not JSON.");
+          throw new Error(
+            "QR decoded, but its content is not JSON."
+          );
         }
 
         if (!payload || !payload.token) {
-          throw new Error("QR decoded, but the token field is missing.");
+          throw new Error(
+            "QR decoded, but the token field is missing."
+          );
         }
 
-        scanMsg("QR decoded. Sending attendance request to AWS...",
-          "#f59e0b");
+        scanMsg(
+          "QR decoded. Sending attendance request to AWS...",
+          "#f59e0b"
+        );
 
         const response = await fetch(API + "/attendance", {
           method: "POST",
@@ -460,13 +579,16 @@
         try {
           data = await response.json();
         } catch {
-          throw new Error("AWS returned HTTP " + response.status +
-            " with an unreadable response.");
+          throw new Error(
+            "AWS returned HTTP " + response.status +
+            " with an unreadable response."
+          );
         }
 
         if (!response.ok) {
           throw new Error(
-            (data.error || data.message || "Attendance request failed") +
+            (data.error || data.message ||
+              "Attendance request failed") +
             " (HTTP " + response.status + ")"
           );
         }
@@ -478,6 +600,7 @@
         );
 
         debugMsg("AWS accepted the attendance request.");
+
         await loadHistory();
 
       } catch (error) {
@@ -498,16 +621,21 @@
         }
 
         const response = await fetch(API + "/reports", {
-          headers: { "Authorization": idToken() }
+          headers: {
+            "Authorization": idToken()
+          }
         });
 
         const data = await response.json();
 
         if (!response.ok) {
-          throw new Error(data.error || "HTTP " + response.status);
+          throw new Error(
+            data.error || "HTTP " + response.status
+          );
         }
 
         const rows = data.attendance || [];
+
         body.replaceChildren();
 
         if (rows.length === 0) {
