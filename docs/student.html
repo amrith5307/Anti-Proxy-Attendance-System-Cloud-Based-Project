@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -271,7 +270,6 @@
         return;
       }
 
-      // Reset the native detector on every start.
       barcodeDetector = null;
 
       try {
@@ -299,7 +297,6 @@
       debugMsg("Opening camera...");
 
       try {
-        // Invalidate any previous scanning loop.
         stopCamera(false);
         const thisScan = scanGeneration;
 
@@ -407,11 +404,12 @@
         if (
           video.readyState >= 2 &&
           video.videoWidth > 0 &&
-          timestamp - lastScanTime >= 150
+          timestamp - lastScanTime >= 100
         ) {
           lastScanTime = timestamp;
 
-          const scale = Math.min(1, 900 / video.videoWidth);
+          // Increased resolution cap for better module clarity in jsQR
+          const scale = Math.min(1, 1280 / video.videoWidth);
 
           canvas.width = Math.round(video.videoWidth * scale);
           canvas.height = Math.round(video.videoHeight * scale);
@@ -428,7 +426,6 @@
 
           let decodedText = null;
 
-          // FIRST: scan using jsQR.
           if (typeof jsQR === "function") {
             const image = context.getImageData(
               0,
@@ -451,8 +448,6 @@
             }
           }
 
-          // SECOND: try Chrome's native detector.
-          // Timeout prevents a slow native call from blocking the loop.
           if (
             !decodedText &&
             barcodeDetector &&
@@ -483,7 +478,6 @@
             return;
           }
 
-          // QR found.
           if (decodedText && !scanDone) {
             scanDone = true;
             scanning = false;
@@ -510,7 +504,6 @@
             return;
           }
 
-          // Update visible diagnostics every two seconds.
           if (timestamp - lastDebugMessage >= 2000) {
             lastDebugMessage = timestamp;
 
@@ -523,7 +516,6 @@
               "Frames: " + framesProcessed +
               " | Image: " + canvas.width + "x" + canvas.height +
               " | jsQR: " + (typeof jsQR === "function" ? "loaded" : "missing") +
-              " | Native: " + (barcodeDetector ? "available" : "unavailable") +
               " | QR not detected"
             );
           }
@@ -553,9 +545,9 @@
           );
         }
 
-        if (!payload || !payload.token) {
+        if (!payload || !payload.token || !payload.session_id) {
           throw new Error(
-            "QR decoded, but the token field is missing."
+            "QR decoded, but required fields (token/session_id) are missing."
           );
         }
 
@@ -571,7 +563,8 @@
             "Authorization": idToken()
           },
           body: JSON.stringify({
-            token: payload.token
+            token: payload.token,
+            session_id: payload.session_id
           })
         });
 
