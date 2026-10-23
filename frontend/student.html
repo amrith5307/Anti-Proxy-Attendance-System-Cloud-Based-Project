@@ -1,145 +1,554 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Student – Anti-Proxy Attendance</title>
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
-<style>
-  *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;padding:1.5rem}
-  h2{color:#38bdf8;margin-bottom:1rem}
-  .card{background:#1e293b;border-radius:12px;padding:1.5rem;margin-bottom:1.2rem}
-  button{padding:.6rem 1.2rem;border:none;border-radius:8px;cursor:pointer;font-weight:600}
-  .btn-primary{background:#38bdf8;color:#0f172a}
-  .btn-danger {background:#ef4444;color:#fff}
-  #video-wrap{position:relative;width:100%;max-width:360px;margin:auto}
-  video{width:100%;border-radius:8px;display:block}
-  canvas{display:none}
-  #scan-msg{margin-top:.8rem;text-align:center;font-size:1rem}
-  table{width:100%;border-collapse:collapse;font-size:.85rem}
-  th{text-align:left;padding:.4rem .6rem;background:#0f172a;color:#94a3b8}
-  td{padding:.4rem .6rem;border-top:1px solid #334155}
-  header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem}
-</style>
-</head>
-<body>
-<script>
-const API = "https://xrn90564rk.execute-api.ap-south-1.amazonaws.com/prod";
-</script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Student - Anti-Proxy Attendance</title>
 
-<header>
-  <h2>📱 Student Dashboard</h2>
-  <div>
-    <span id="user-name" style="color:#94a3b8;margin-right:1rem"></span>
-    <button class="btn-danger" onclick="logout()">Logout</button>
-  </div>
-</header>
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 
-<div class="card">
-  <h3 style="margin-bottom:.8rem;color:#7dd3fc">Scan QR Code</h3>
-  <div id="video-wrap">
-    <video id="video" autoplay playsinline muted></video>
-    <canvas id="canvas"></canvas>
-  </div>
-  <div id="scan-msg" style="color:#94a3b8">Camera loading…</div>
-  <br>
-  <button class="btn-primary" onclick="startCamera()">📷 Start Camera</button>
-  <button class="btn-danger"  onclick="stopCamera()" style="margin-left:.5rem">⏹ Stop</button>
-</div>
-
-<div class="card">
-  <h3 style="margin-bottom:.8rem;color:#7dd3fc">My Attendance</h3>
-  <button class="btn-primary" onclick="loadHistory()" style="margin-bottom:.8rem">🔄 Refresh</button>
-  <table><thead><tr><th>Subject</th><th>Time</th></tr></thead>
-  <tbody id="att-body"></tbody></table>
-</div>
-
-<script>
-const idToken = () => sessionStorage.getItem("id_token");
-document.getElementById("user-name").textContent =
-  sessionStorage.getItem("user_name")||"";
-
-function logout(){ sessionStorage.clear(); location.href="index.html"; }
-
-let stream=null, scanning=false, scanDone=false;
-
-function scanMsg(t,color="#94a3b8"){
-  const el=document.getElementById("scan-msg");
-  el.style.color=color; el.textContent=t;
-}
-
-async function startCamera(){
-  scanDone=false;
-  try{
-    stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:"environment"}});
-    const v=document.getElementById("video");
-    v.srcObject=stream;
-    scanning=true;
-    requestAnimationFrame(tick);
-    scanMsg("Point camera at the QR code…","#94a3b8");
-  }catch(e){ scanMsg("Camera error: "+e.message,"#f87171"); }
-}
-
-function stopCamera(){
-  scanning=false;
-  if(stream) stream.getTracks().forEach(t=>t.stop());
-  stream=null;
-  scanMsg("Camera stopped.","#94a3b8");
-}
-
-function tick(){
-  if(!scanning) return;
-  const v=document.getElementById("video");
-  const c=document.getElementById("canvas");
-  if(v.readyState===v.HAVE_ENOUGH_DATA){
-    c.width=v.videoWidth; c.height=v.videoHeight;
-    const ctx=c.getContext("2d");
-    ctx.drawImage(v,0,0,c.width,c.height);
-    const img=ctx.getImageData(0,0,c.width,c.height);
-    const code=jsQR(img.data,img.width,img.height,{inversionAttempts:"dontInvert"});
-    if(code && !scanDone){
-      scanDone=true;
-      stopCamera();
-      handleQRData(code.data);
-      return;
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
     }
-  }
-  requestAnimationFrame(tick);
-}
 
-async function handleQRData(raw){
-  scanMsg("Processing…","#f59e0b");
-  try{
-    const { token } = JSON.parse(raw);
-    const r = await fetch(API+"/attendance",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","Authorization":idToken()},
-      body: JSON.stringify({token})
+    body {
+      font-family: system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 1.5rem;
+    }
+
+    h2 {
+      color: #38bdf8;
+      margin-bottom: 1rem;
+    }
+
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 1.5rem;
+      margin-bottom: 1.2rem;
+    }
+
+    button {
+      padding: 0.6rem 1.2rem;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      margin-top: 0.5rem;
+    }
+
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+
+    .btn-primary {
+      background: #38bdf8;
+      color: #0f172a;
+    }
+
+    .btn-danger {
+      background: #ef4444;
+      color: white;
+    }
+
+    #video-wrap {
+      position: relative;
+      width: 100%;
+      max-width: 420px;
+      margin: auto;
+    }
+
+    video {
+      width: 100%;
+      border-radius: 8px;
+      display: block;
+      background: #020617;
+      min-height: 180px;
+      object-fit: cover;
+    }
+
+    canvas {
+      display: none;
+    }
+
+    #scan-msg {
+      margin-top: 0.8rem;
+      text-align: center;
+      font-size: 1rem;
+      overflow-wrap: anywhere;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+
+    th {
+      text-align: left;
+      padding: 0.6rem;
+      background: #0f172a;
+      color: #94a3b8;
+    }
+
+    td {
+      padding: 0.6rem;
+      border-top: 1px solid #334155;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 1rem;
+      flex-wrap: wrap;
+      margin-bottom: 1.5rem;
+    }
+  </style>
+</head>
+
+<body>
+  <script>
+    const API =
+      "https://xrn90564rk.execute-api.ap-south-1.amazonaws.com/prod";
+  </script>
+
+  <header>
+    <h2>Student Dashboard</h2>
+    <div>
+      <span id="user-name"
+        style="color:#94a3b8;margin-right:1rem"></span>
+      <button class="btn-danger" onclick="logout()">Logout</button>
+    </div>
+  </header>
+
+  <div class="card">
+    <h3 style="margin-bottom:0.8rem;color:#7dd3fc">
+      Scan QR Code
+    </h3>
+
+    <div id="video-wrap">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="canvas"></canvas>
+    </div>
+
+    <div id="scan-msg" role="status" aria-live="polite"
+      style="color:#94a3b8">
+      Ready. Tap Start Camera.
+    </div>
+
+    <div style="text-align:center;margin-top:0.5rem">
+      <button id="start-btn" class="btn-primary"
+        onclick="startCamera()">
+        Start Camera
+      </button>
+
+      <button id="stop-btn" class="btn-danger"
+        onclick="stopCamera()">
+        Stop
+      </button>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3 style="margin-bottom:0.8rem;color:#7dd3fc">
+      My Attendance
+    </h3>
+
+    <button class="btn-primary" onclick="loadHistory()">
+      Refresh
+    </button>
+
+    <div class="table-wrap" style="margin-top:0.8rem">
+      <table>
+        <thead>
+          <tr>
+            <th>Subject</th>
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody id="att-body">
+          <tr>
+            <td colspan="2">Loading attendance...</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script>
+    const idToken = () => sessionStorage.getItem("id_token");
+
+    document.getElementById("user-name").textContent =
+      sessionStorage.getItem("user_name") || "Student";
+
+    let stream = null;
+    let scanning = false;
+    let scanDone = false;
+    let animationId = null;
+    let lastScanTime = 0;
+
+    const video = document.getElementById("video");
+    const canvas = document.getElementById("canvas");
+    const context = canvas.getContext("2d", {
+      willReadFrequently: true
     });
-    const d = await r.json();
-    if(!r.ok) throw new Error(d.error||"Failed");
-    scanMsg(`✅ ${d.message} — ${d.subject}`,"#4ade80");
+
+    function scanMsg(message, color = "#94a3b8") {
+      const element = document.getElementById("scan-msg");
+      element.textContent = message;
+      element.style.color = color;
+    }
+
+    function logout() {
+      stopCamera(false);
+      sessionStorage.clear();
+      location.href = "index.html";
+    }
+
+    async function startCamera() {
+      if (scanning) {
+        scanMsg("Camera is already running. Point it at the QR.");
+        return;
+      }
+
+      if (!navigator.mediaDevices ||
+          !navigator.mediaDevices.getUserMedia) {
+        scanMsg(
+          "Camera unavailable. Open this page using HTTPS in a supported browser.",
+          "#f87171"
+        );
+        return;
+      }
+
+      if (typeof jsQR !== "function") {
+        scanMsg(
+          "QR library failed to load. Check your internet connection and reload the page.",
+          "#f87171"
+        );
+        return;
+      }
+
+      if (!idToken()) {
+        scanMsg(
+          "Login session missing. Please log in again.",
+          "#f87171"
+        );
+        return;
+      }
+
+      document.getElementById("start-btn").disabled = true;
+      scanMsg("Requesting camera permission...");
+
+      try {
+        // Clean up an old camera stream before opening another.
+        stopCamera(false);
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          audio: false,
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+          }
+        });
+
+        video.srcObject = stream;
+
+        // Wait until the video can actually provide image frames.
+        await new Promise((resolve, reject) => {
+          if (video.readyState >= 2 &&
+              video.videoWidth > 0) {
+            resolve();
+            return;
+          }
+
+          const onReady = () => {
+            cleanup();
+            resolve();
+          };
+
+          const onError = () => {
+            cleanup();
+            reject(new Error("Could not start the camera video."));
+          };
+
+          const cleanup = () => {
+            video.removeEventListener("loadeddata", onReady);
+            video.removeEventListener("error", onError);
+          };
+
+          video.addEventListener("loadeddata", onReady, {
+            once: true
+          });
+          video.addEventListener("error", onError, {
+            once: true
+          });
+        });
+
+        await video.play();
+
+        scanning = true;
+        scanDone = false;
+        lastScanTime = 0;
+
+        document.getElementById("start-btn").disabled = false;
+
+        scanMsg(
+          "Camera ready. Point at the QR code and hold steady.",
+          "#38bdf8"
+        );
+
+        animationId = requestAnimationFrame(tick);
+
+      } catch (error) {
+        stopCamera(false);
+
+        let message = error.message || "Unknown camera error";
+
+        if (error.name === "NotAllowedError") {
+          message = "Camera permission denied. Allow camera access in your browser.";
+        } else if (error.name === "NotFoundError") {
+          message = "No camera was found on this device.";
+        } else if (error.name === "NotReadableError") {
+          message = "Camera is busy. Close other camera apps and try again.";
+        }
+
+        scanMsg("Camera error: " + message, "#f87171");
+        document.getElementById("start-btn").disabled = false;
+      }
+    }
+
+    function stopCamera(showMessage = true) {
+      scanning = false;
+
+      if (animationId !== null) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+      }
+
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+        stream = null;
+      }
+
+      video.srcObject = null;
+      document.getElementById("start-btn").disabled = false;
+
+      if (showMessage) {
+        scanMsg("Camera stopped.");
+      }
+    }
+
+    function tick(timestamp) {
+      if (!scanning) return;
+
+      if (video.readyState >= 2 &&
+          video.videoWidth > 0 &&
+          timestamp - lastScanTime >= 100) {
+
+        lastScanTime = timestamp;
+
+        try {
+          // Reduce processing cost on mobile devices.
+          const scale = Math.min(
+            1,
+            900 / video.videoWidth
+          );
+
+          canvas.width = Math.round(video.videoWidth * scale);
+          canvas.height = Math.round(video.videoHeight * scale);
+
+          context.drawImage(
+            video,
+            0,
+            0,
+            canvas.width,
+            canvas.height
+          );
+
+          const image = context.getImageData(
+            0,
+            0,
+            canvas.width,
+            canvas.height
+          );
+
+          // Try normal and inverted QR appearances.
+          const code = jsQR(
+            image.data,
+            image.width,
+            image.height,
+            { inversionAttempts: "attemptBoth" }
+          );
+
+          if (code && code.data && !scanDone) {
+            scanDone = true;
+            scanning = false;
+
+            stopCamera(false);
+            scanMsg("QR detected! Processing attendance...", "#f59e0b");
+
+            handleQRData(code.data);
+            return;
+          }
+
+        } catch (error) {
+          console.error("QR scanning error:", error);
+          scanMsg(
+            "Scanner error: " + error.message,
+            "#f87171"
+          );
+        }
+      }
+
+      if (scanning) {
+        animationId = requestAnimationFrame(tick);
+      }
+    }
+
+    async function handleQRData(raw) {
+      try {
+        let payload;
+
+        try {
+          payload = JSON.parse(raw);
+        } catch {
+          throw new Error(
+            "QR detected, but its contents are not valid JSON."
+          );
+        }
+
+        if (!payload || !payload.token) {
+          throw new Error(
+            "QR detected, but the expected token field is missing."
+          );
+        }
+
+        scanMsg(
+          "QR decoded. Sending attendance request to AWS...",
+          "#f59e0b"
+        );
+
+        const response = await fetch(API + "/attendance", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": idToken()
+          },
+          body: JSON.stringify({
+            token: payload.token
+          })
+        });
+
+        let data;
+
+        try {
+          data = await response.json();
+        } catch {
+          throw new Error(
+            "AWS returned an unreadable response (HTTP " +
+            response.status + ")."
+          );
+        }
+
+        if (!response.ok) {
+          throw new Error(
+            (data.error || data.message || "Attendance request failed") +
+            " (HTTP " + response.status + ")"
+          );
+        }
+
+        scanMsg(
+          (data.message || "Attendance marked") +
+          (data.subject ? " — " + data.subject : ""),
+          "#4ade80"
+        );
+
+        await loadHistory();
+
+      } catch (error) {
+        console.error("Attendance processing error:", error);
+
+        scanMsg(
+          "Error: " + error.message,
+          "#f87171"
+        );
+      }
+    }
+
+    async function loadHistory() {
+      const body = document.getElementById("att-body");
+
+      try {
+        if (!idToken()) {
+          body.innerHTML =
+            "<tr><td colspan='2'>Please log in again.</td></tr>";
+          return;
+        }
+
+        const response = await fetch(API + "/reports", {
+          headers: {
+            "Authorization": idToken()
+          }
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(
+            data.error || "HTTP " + response.status
+          );
+        }
+
+        const rows = data.attendance || [];
+
+        body.replaceChildren();
+
+        if (rows.length === 0) {
+          body.innerHTML =
+            "<tr><td colspan='2' style='color:#94a3b8'>" +
+            "No attendance records yet.</td></tr>";
+          return;
+        }
+
+        rows.forEach(record => {
+          const row = document.createElement("tr");
+          const subject = document.createElement("td");
+          const time = document.createElement("td");
+
+          subject.textContent = record.subject || "—";
+
+          const timestamp = Number(record.marked_at);
+          time.textContent = Number.isFinite(timestamp)
+            ? new Date(timestamp * 1000).toLocaleString()
+            : "—";
+
+          row.append(subject, time);
+          body.appendChild(row);
+        });
+
+      } catch (error) {
+        console.error("Attendance history error:", error);
+
+        body.innerHTML =
+          "<tr><td colspan='2'>Could not load attendance: " +
+          "check your connection or log in again.</td></tr>";
+      }
+    }
+
     loadHistory();
-  }catch(e){ scanMsg("❌ "+e.message,"#f87171"); }
-}
-
-async function loadHistory(){
-  try{
-    const r = await fetch(API+"/reports",{
-      headers:{"Authorization":idToken()}
-    });
-    const d = await r.json();
-    const rows = d.attendance||[];
-    document.getElementById("att-body").innerHTML =
-      rows.map(a=>`<tr>
-        <td>${a.subject||"—"}</td>
-        <td>${new Date(a.marked_at*1000).toLocaleString()}</td>
-      </tr>`).join("")||"<tr><td colspan=2 style='color:#64748b'>No records yet</td></tr>";
-  }catch(e){ console.error(e); }
-}
-
-loadHistory();
-</script>
+  </script>
 </body>
 </html>
