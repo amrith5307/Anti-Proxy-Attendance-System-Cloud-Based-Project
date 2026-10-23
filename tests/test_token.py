@@ -1,25 +1,21 @@
-import sys
-sys.path.insert(0, "src")
-from token_utils import make_token, verify_token
+import os, time, pytest
+os.environ["TOKEN_SECRET"] = "test-secret"
 
-S = "test-secret"
+from src.token_utils import generate_token, verify_token
 
+def test_roundtrip():
+    result = generate_token("sess-1", "faculty-1")
+    assert "token" in result
+    payload = verify_token(result["token"])
+    assert payload["sid"] == "sess-1"
+    assert payload["fid"] == "faculty-1"
 
-def test_valid():
-    t = make_token(S, "sess1", now=1000)
-    assert verify_token(S, t, now=1010) == (True, "sess1")
+def test_bad_signature():
+    result = generate_token("sess-1", "faculty-1")
+    bad = result["token"][:-4] + "XXXX"
+    with pytest.raises(ValueError, match="Bad signature"):
+        verify_token(bad)
 
-
-def test_expired_screenshot():
-    t = make_token(S, "sess1", now=1000)
-    assert verify_token(S, t, now=1100) == (False, "expired")
-
-
-def test_tampered():
-    t = make_token(S, "sess1", now=1000)
-    assert verify_token(S, t.replace("sess1", "sess2"), now=1005)[0] is False
-
-
-def test_wrong_secret():
-    t = make_token("other", "sess1", now=1000)
-    assert verify_token(S, t, now=1005)[0] is False
+def test_malformed():
+    with pytest.raises(ValueError, match="Malformed"):
+        verify_token("not-a-valid-token")

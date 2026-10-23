@@ -1,12 +1,8 @@
 version = 0.1
-
 [default.deploy.parameters]
-stack_name = "attendance"
-resolve_s3 = true
-s3_prefix = "attendance"
-region = "ap-south-1"
-capabilities = "CAPABILITY_IAM"
-image_repositories = []
-
-[default.global.parameters]
-region = "ap-south-1"
+stack_name      = "anti-proxy-attendance"
+region          = "us-east-1"
+confirm_changeset = true
+capabilities    = "CAPABILITY_IAM"
+resolve_s3      = true
+parameter_overrides = "TokenSecret=CHANGE_ME_STRONG_SECRET"

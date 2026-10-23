@@ -1,29 +1,30 @@
-import json, os, time, uuid, boto3
+import json, os, uuid, time, boto3
 
-table = boto3.resource("dynamodb").Table(os.environ["SESSIONS_TABLE"])
-H = {"Access-Control-Allow-Origin": "*", "Content-Type": "application/json"}
-
-
-def resp(code, body):
-    return {"statusCode": code, "headers": H, "body": json.dumps(body)}
-
+dynamodb = boto3.resource("dynamodb")
+TABLE = dynamodb.Table(os.environ["SESSIONS_TABLE"])
 
 def lambda_handler(event, context):
     claims = event["requestContext"]["authorizer"]["claims"]
     if "Faculty" not in claims.get("cognito:groups", ""):
-        return resp(403, {"error": "Faculty only"})
+        return _r(403, {"error": "Faculty only"})
 
     body = json.loads(event.get("body") or "{}")
-    minutes = int(body.get("minutes", 10))
+    subject = body.get("subject", "General")
+    duration = int(body.get("duration_minutes", 60))
+    session_id = str(uuid.uuid4())
     now = int(time.time())
-    session_id = str(uuid.uuid4())[:8]
 
-    table.put_item(Item={
+    TABLE.put_item(Item={
         "session_id": session_id,
-        "course": body.get("course", "General"),
-        "faculty": claims["email"],
-        "status": "open",
+        "faculty_id": claims["sub"],
+        "subject": subject,
+        "status": "ACTIVE",
         "created_at": now,
-        "expires_at": now + minutes * 60,
+        "expires_at": now + duration * 60
     })
-    return resp(200, {"session_id": session_id, "expires_in_minutes": minutes})
+    return _r(200, {"session_id": session_id, "expires_at": now + duration * 60})
+
+def _r(code, body):
+    return {"statusCode": code,
+            "headers": {"Access-Control-Allow-Origin": "*"},
+            "body": json.dumps(body)}
