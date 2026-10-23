@@ -33,13 +33,11 @@
   <div id="msg"></div>
 </div>
 <script>
-// ── FILL THESE IN AFTER sam deploy ──────────────────────────
 const CONFIG = {
-  region:       "us-east-1",
-  userPoolId:   "us-east-1_XXXXXXX",   // from sam deploy output
-  clientId:     "XXXXXXXXXXXXXXXXX"    // from sam deploy output
+  region:       "ap-south-1",
+  userPoolId:   "ap-south-1_KRANtgC8F",
+  clientId:     "7g9hqepcfahi0sh619bmdl6v15"
 };
-// ────────────────────────────────────────────────────────────
 
 function msg(t, err=false){
   document.getElementById("msg").style.color = err?"#f87171":"#4ade80";
@@ -75,7 +73,6 @@ async function login(){
     sessionStorage.setItem("access_token",AccessToken);
     sessionStorage.setItem("refresh_token",RefreshToken);
 
-    // decode group from IdToken payload
     const payload = JSON.parse(atob(IdToken.split(".")[1]));
     const groups  = payload["cognito:groups"] || [];
     sessionStorage.setItem("user_name", payload.name||payload.email);
