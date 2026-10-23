@@ -1,0 +1,152 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: Anti-Proxy Attendance System
+
+Parameters:
+  TokenSecret:
+    Type: String
+    NoEcho: true
+    Description: Secret key used to sign QR tokens
+
+Globals:
+  Function:
+    Runtime: python3.11
+    CodeUri: src/
+    Timeout: 10
+    Environment:
+      Variables:
+        SESSIONS_TABLE: !Ref SessionsTable
+        ATTENDANCE_TABLE: !Ref AttendanceTable
+        TOKEN_SECRET: !Ref TokenSecret
+
+Resources:
+  # ---------- Database ----------
+  SessionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: session_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: session_id
+          KeyType: HASH
+
+  AttendanceTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: session_id
+          AttributeType: S
+        - AttributeName: student_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: session_id
+          KeyType: HASH
+        - AttributeName: student_id
+          KeyType: RANGE
+
+  # ---------- Cognito ----------
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: AttendanceUsers
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 8
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+        - ALLOW_USER_PASSWORD_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  FacultyGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: Faculty
+      UserPoolId: !Ref UserPool
+
+  StudentGroup:
+    Type: AWS::Cognito::UserPoolGroup
+    Properties:
+      GroupName: Student
+      UserPoolId: !Ref UserPool
+
+  # ---------- API ----------
+  AttendanceApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: prod
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,Authorization'"
+        AllowOrigin: "'*'"
+      Auth:
+        DefaultAuthorizer: CognitoAuth
+        AddDefaultAuthorizerToCorsPreflight: false
+        Authorizers:
+          CognitoAuth:
+            UserPoolArn: !GetAtt UserPool.Arn
+
+  # ---------- Lambdas ----------
+  StartSessionFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: start_session.lambda_handler
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SessionsTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AttendanceApi
+            Path: /sessions
+            Method: post
+
+  GenerateTokenFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: generate_token.lambda_handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SessionsTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AttendanceApi
+            Path: /token/{session_id}
+            Method: get
+
+  MarkAttendanceFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: mark_attendance.lambda_handler
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref SessionsTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref AttendanceTable
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AttendanceApi
+            Path: /attendance
+            Method: post
+
+Outputs:
+  ApiUrl:
+    Value: !Sub "https://${AttendanceApi}.execute-api.${AWS::Region}.amazonaws.com/prod"
+  UserPoolId:
+    Value: !Ref UserPool
+  UserPoolClientId:
+    Value: !Ref UserPoolClient
