@@ -1,4 +1,4 @@
-AWSTemplateFormatVersion: '2010-09-09'
+AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: Anti-Proxy Attendance System – DA3
 
@@ -9,9 +9,9 @@ Globals:
     MemorySize: 128
     Environment:
       Variables:
-        SESSIONS_TABLE:   !Ref SessionsTable
+        SESSIONS_TABLE: !Ref SessionsTable
         ATTENDANCE_TABLE: !Ref AttendanceTable
-        TOKEN_SECRET:     !Ref TokenSecret
+        TOKEN_SECRET: !Ref TokenSecret
         REPORT_TOPIC_ARN: !Ref ReportTopic
 
 Parameters:
@@ -22,7 +22,6 @@ Parameters:
 
 # ─────────────────────────────────────────
 Resources:
-
   # ── DynamoDB ──────────────────────────
   SessionsTable:
     Type: AWS::DynamoDB::Table
@@ -30,9 +29,9 @@ Resources:
       TableName: attendance-sessions
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - {AttributeName: session_id, AttributeType: S}
+        - { AttributeName: session_id, AttributeType: S }
       KeySchema:
-        - {AttributeName: session_id, KeyType: HASH}
+        - { AttributeName: session_id, KeyType: HASH }
       TimeToLiveSpecification:
         AttributeName: expires_at
         Enabled: true
@@ -43,11 +42,11 @@ Resources:
       TableName: attendance-records
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
-        - {AttributeName: session_id, AttributeType: S}
-        - {AttributeName: student_id, AttributeType: S}
+        - { AttributeName: session_id, AttributeType: S }
+        - { AttributeName: student_id, AttributeType: S }
       KeySchema:
-        - {AttributeName: session_id, KeyType: HASH}
-        - {AttributeName: student_id, KeyType: RANGE}
+        - { AttributeName: session_id, KeyType: HASH }
+        - { AttributeName: student_id, KeyType: RANGE }
 
   # ── Cognito ───────────────────────────
   UserPool:
@@ -55,9 +54,9 @@ Resources:
     Properties:
       UserPoolName: attendance-user-pool
       AutoVerifiedAttributes: [email]
-      UsernameAttributes:     [email]
+      UsernameAttributes: [email]
       Schema:
-        - {Name: name, AttributeDataType: String, Mutable: true}
+        - { Name: name, AttributeDataType: String, Mutable: true }
 
   FacultyGroup:
     Type: AWS::Cognito::UserPoolGroup
@@ -95,9 +94,10 @@ Resources:
       Cors:
         AllowMethods: "'GET,POST,OPTIONS'"
         AllowHeaders: "'Content-Type,Authorization'"
-        AllowOrigin:  "'*'"
+        AllowOrigin: "'*'"
       Auth:
         DefaultAuthorizer: CognitoAuth
+        AddDefaultAuthorizerToCorsPreflight: false
         Authorizers:
           CognitoAuth:
             UserPoolArn: !GetAtt UserPool.Arn
@@ -109,10 +109,14 @@ Resources:
       CodeUri: src/
       Handler: start_session.lambda_handler
       Policies:
-        - DynamoDBCrudPolicy: {TableName: !Ref SessionsTable}
+        - DynamoDBCrudPolicy: { TableName: !Ref SessionsTable }
       Events:
-        Api: {Type: Api, Properties: {RestApiId: !Ref AttendanceApi,
-              Path: /sessions, Method: post}}
+        Api:
+          {
+            Type: Api,
+            Properties:
+              { RestApiId: !Ref AttendanceApi, Path: /sessions, Method: post },
+          }
 
   GenerateTokenFn:
     Type: AWS::Serverless::Function
@@ -120,10 +124,18 @@ Resources:
       CodeUri: src/
       Handler: generate_token.lambda_handler
       Policies:
-        - DynamoDBReadPolicy: {TableName: !Ref SessionsTable}
+        - DynamoDBReadPolicy: { TableName: !Ref SessionsTable }
       Events:
-        Api: {Type: Api, Properties: {RestApiId: !Ref AttendanceApi,
-              Path: /sessions/{session_id}/token, Method: get}}
+        Api:
+          {
+            Type: Api,
+            Properties:
+              {
+                RestApiId: !Ref AttendanceApi,
+                Path: "/sessions/{session_id}/token",
+                Method: get,
+              },
+          }
 
   MarkAttendanceFn:
     Type: AWS::Serverless::Function
@@ -131,11 +143,19 @@ Resources:
       CodeUri: src/
       Handler: mark_attendance.lambda_handler
       Policies:
-        - DynamoDBReadPolicy: {TableName: !Ref SessionsTable}
-        - DynamoDBCrudPolicy: {TableName: !Ref AttendanceTable}
+        - DynamoDBReadPolicy: { TableName: !Ref SessionsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref AttendanceTable }
       Events:
-        Api: {Type: Api, Properties: {RestApiId: !Ref AttendanceApi,
-              Path: /attendance, Method: post}}
+        Api:
+          {
+            Type: Api,
+            Properties:
+              {
+                RestApiId: !Ref AttendanceApi,
+                Path: /attendance,
+                Method: post,
+              },
+          }
 
   CloseSessionFn:
     Type: AWS::Serverless::Function
@@ -143,12 +163,20 @@ Resources:
       CodeUri: src/
       Handler: close_session.lambda_handler
       Policies:
-        - DynamoDBCrudPolicy: {TableName: !Ref SessionsTable}
-        - DynamoDBReadPolicy: {TableName: !Ref AttendanceTable}
-        - SNSPublishMessagePolicy: {TopicName: !GetAtt ReportTopic.TopicName}
+        - DynamoDBCrudPolicy: { TableName: !Ref SessionsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref AttendanceTable }
+        - SNSPublishMessagePolicy: { TopicName: !GetAtt ReportTopic.TopicName }
       Events:
-        Api: {Type: Api, Properties: {RestApiId: !Ref AttendanceApi,
-              Path: /sessions/{session_id}/close, Method: post}}
+        Api:
+          {
+            Type: Api,
+            Properties:
+              {
+                RestApiId: !Ref AttendanceApi,
+                Path: "/sessions/{session_id}/close",
+                Method: post,
+              },
+          }
 
   ReportFn:
     Type: AWS::Serverless::Function
@@ -156,13 +184,25 @@ Resources:
       CodeUri: src/
       Handler: report.lambda_handler
       Policies:
-        - DynamoDBReadPolicy: {TableName: !Ref SessionsTable}
-        - DynamoDBReadPolicy: {TableName: !Ref AttendanceTable}
+        - DynamoDBReadPolicy: { TableName: !Ref SessionsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref AttendanceTable }
       Events:
-        List: {Type: Api, Properties: {RestApiId: !Ref AttendanceApi,
-               Path: /reports, Method: get}}
-        Detail: {Type: Api, Properties: {RestApiId: !Ref AttendanceApi,
-                 Path: /reports/{session_id}, Method: get}}
+        List:
+          {
+            Type: Api,
+            Properties:
+              { RestApiId: !Ref AttendanceApi, Path: /reports, Method: get },
+          }
+        Detail:
+          {
+            Type: Api,
+            Properties:
+              {
+                RestApiId: !Ref AttendanceApi,
+                Path: "/reports/{session_id}",
+                Method: get,
+              },
+          }
 
   # ── EventBridge auto-close ─────────────
   AutoCloseFn:
@@ -171,9 +211,9 @@ Resources:
       CodeUri: src/
       Handler: close_session.auto_close_handler
       Policies:
-        - DynamoDBCrudPolicy: {TableName: !Ref SessionsTable}
-        - DynamoDBReadPolicy: {TableName: !Ref AttendanceTable}
-        - SNSPublishMessagePolicy: {TopicName: !GetAtt ReportTopic.TopicName}
+        - DynamoDBCrudPolicy: { TableName: !Ref SessionsTable }
+        - DynamoDBReadPolicy: { TableName: !Ref AttendanceTable }
+        - SNSPublishMessagePolicy: { TopicName: !GetAtt ReportTopic.TopicName }
       Events:
         Schedule:
           Type: Schedule

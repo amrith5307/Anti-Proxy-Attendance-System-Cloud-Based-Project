@@ -1,16 +1,11 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: Anti-Proxy Attendance System
-Parameters:
-  TokenSecret:
-    Type: String
-    NoEcho: true
-    Description: Secret key used to sign QR tokens
+Description: "Anti-Proxy Attendance System \u2013 DA3"
 Globals:
   Function:
-    Runtime: python3.11
-    CodeUri: src/
-    Timeout: 10
+    Runtime: python3.12
+    Timeout: 15
+    MemorySize: 128
     Environment:
       Variables:
         SESSIONS_TABLE:
@@ -19,10 +14,18 @@ Globals:
           Ref: AttendanceTable
         TOKEN_SECRET:
           Ref: TokenSecret
+        REPORT_TOPIC_ARN:
+          Ref: ReportTopic
+Parameters:
+  TokenSecret:
+    Type: String
+    NoEcho: true
+    Default: replace-with-strong-secret
 Resources:
   SessionsTable:
     Type: AWS::DynamoDB::Table
     Properties:
+      TableName: attendance-sessions
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
       - AttributeName: session_id
@@ -30,9 +33,13 @@ Resources:
       KeySchema:
       - AttributeName: session_id
         KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
   AttendanceTable:
     Type: AWS::DynamoDB::Table
     Properties:
+      TableName: attendance-records
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
       - AttributeName: session_id
@@ -47,23 +54,15 @@ Resources:
   UserPool:
     Type: AWS::Cognito::UserPool
     Properties:
-      UserPoolName: AttendanceUsers
-      UsernameAttributes:
-      - email
+      UserPoolName: attendance-user-pool
       AutoVerifiedAttributes:
       - email
-      Policies:
-        PasswordPolicy:
-          MinimumLength: 8
-  UserPoolClient:
-    Type: AWS::Cognito::UserPoolClient
-    Properties:
-      UserPoolId:
-        Ref: UserPool
-      GenerateSecret: false
-      ExplicitAuthFlows:
-      - ALLOW_USER_PASSWORD_AUTH
-      - ALLOW_REFRESH_TOKEN_AUTH
+      UsernameAttributes:
+      - email
+      Schema:
+      - Name: name
+        AttributeDataType: String
+        Mutable: true
   FacultyGroup:
     Type: AWS::Cognito::UserPoolGroup
     Properties:
@@ -76,6 +75,20 @@ Resources:
       GroupName: Student
       UserPoolId:
         Ref: UserPool
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      ClientName: attendance-web
+      UserPoolId:
+        Ref: UserPool
+      GenerateSecret: false
+      ExplicitAuthFlows:
+      - ALLOW_USER_PASSWORD_AUTH
+      - ALLOW_REFRESH_TOKEN_AUTH
+  ReportTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: attendance-reports
   AttendanceApi:
     Type: AWS::Serverless::Api
     Properties:
@@ -93,9 +106,10 @@ Resources:
               Fn::GetAtt:
               - UserPool
               - Arn
-  StartSessionFunction:
+  StartSessionFn:
     Type: AWS::Serverless::Function
     Properties:
+      CodeUri: StartSessionFn
       Handler: start_session.lambda_handler
       Policies:
       - DynamoDBCrudPolicy:
@@ -109,12 +123,12 @@ Resources:
               Ref: AttendanceApi
             Path: /sessions
             Method: post
-      CodeUri: StartSessionFunction
     Metadata:
-      SamResourceId: StartSessionFunction
-  GenerateTokenFunction:
+      SamResourceId: StartSessionFn
+  GenerateTokenFn:
     Type: AWS::Serverless::Function
     Properties:
+      CodeUri: GenerateTokenFn
       Handler: generate_token.lambda_handler
       Policies:
       - DynamoDBReadPolicy:
@@ -126,14 +140,14 @@ Resources:
           Properties:
             RestApiId:
               Ref: AttendanceApi
-            Path: /token/{session_id}
+            Path: /sessions/{session_id}/token
             Method: get
-      CodeUri: GenerateTokenFunction
     Metadata:
-      SamResourceId: GenerateTokenFunction
-  MarkAttendanceFunction:
+      SamResourceId: GenerateTokenFn
+  MarkAttendanceFn:
     Type: AWS::Serverless::Function
     Properties:
+      CodeUri: MarkAttendanceFn
       Handler: mark_attendance.lambda_handler
       Policies:
       - DynamoDBReadPolicy:
@@ -150,16 +164,100 @@ Resources:
               Ref: AttendanceApi
             Path: /attendance
             Method: post
-      CodeUri: MarkAttendanceFunction
     Metadata:
-      SamResourceId: MarkAttendanceFunction
+      SamResourceId: MarkAttendanceFn
+  CloseSessionFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: CloseSessionFn
+      Handler: close_session.lambda_handler
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: SessionsTable
+      - DynamoDBReadPolicy:
+          TableName:
+            Ref: AttendanceTable
+      - SNSPublishMessagePolicy:
+          TopicName:
+            Fn::GetAtt:
+            - ReportTopic
+            - TopicName
+      Events:
+        Api:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: AttendanceApi
+            Path: /sessions/{session_id}/close
+            Method: post
+    Metadata:
+      SamResourceId: CloseSessionFn
+  ReportFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ReportFn
+      Handler: report.lambda_handler
+      Policies:
+      - DynamoDBReadPolicy:
+          TableName:
+            Ref: SessionsTable
+      - DynamoDBReadPolicy:
+          TableName:
+            Ref: AttendanceTable
+      Events:
+        List:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: AttendanceApi
+            Path: /reports
+            Method: get
+        Detail:
+          Type: Api
+          Properties:
+            RestApiId:
+              Ref: AttendanceApi
+            Path: /reports/{session_id}
+            Method: get
+    Metadata:
+      SamResourceId: ReportFn
+  AutoCloseFn:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: AutoCloseFn
+      Handler: close_session.auto_close_handler
+      Policies:
+      - DynamoDBCrudPolicy:
+          TableName:
+            Ref: SessionsTable
+      - DynamoDBReadPolicy:
+          TableName:
+            Ref: AttendanceTable
+      - SNSPublishMessagePolicy:
+          TopicName:
+            Fn::GetAtt:
+            - ReportTopic
+            - TopicName
+      Events:
+        Schedule:
+          Type: Schedule
+          Properties:
+            Schedule: rate(5 minutes)
+            Enabled: true
+    Metadata:
+      SamResourceId: AutoCloseFn
 Outputs:
   ApiUrl:
     Value:
       Fn::Sub: https://${AttendanceApi}.execute-api.${AWS::Region}.amazonaws.com/prod
+    Description: Paste this into the frontend CONFIG
   UserPoolId:
     Value:
       Ref: UserPool
   UserPoolClientId:
     Value:
       Ref: UserPoolClient
+  ReportTopicArn:
+    Value:
+      Ref: ReportTopic
