@@ -13,10 +13,11 @@
   input,select{padding:.5rem .8rem;border-radius:8px;border:1px solid #334155;
                background:#0f172a;color:#e2e8f0;width:100%;margin-bottom:.8rem}
   button{padding:.6rem 1.2rem;border:none;border-radius:8px;cursor:pointer;font-weight:600}
+  button:disabled{opacity:.6;cursor:not-allowed}
   .btn-primary{background:#38bdf8;color:#0f172a}
   .btn-danger {background:#ef4444;color:#fff}
   #qr-box{display:none;text-align:center}
-  #qr-box canvas,#qr-box img{margin:auto}
+  #qr-box canvas,#qr-box img{margin:auto; background:#fff; padding:10px; border-radius:8px;}
   #countdown{font-size:1.3rem;color:#f59e0b;margin:.8rem 0}
   #status-msg{color:#4ade80;margin-top:.5rem;font-size:.9rem}
   table{width:100%;border-collapse:collapse;margin-top:.8rem;font-size:.85rem}
@@ -25,6 +26,7 @@
   .badge{padding:.2rem .6rem;border-radius:999px;font-size:.75rem;font-weight:700}
   .active{background:#166534;color:#4ade80}
   .closed{background:#3f1414;color:#f87171}
+  .small-btn{font-size:.75rem;padding:.2rem .6rem;margin-right:.3rem}
   header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1.5rem}
 </style>
 </head>
@@ -45,7 +47,7 @@ const API  = "https://xrn90564rk.execute-api.ap-south-1.amazonaws.com/prod";
   <h3 style="margin-bottom:1rem;color:#7dd3fc">Start New Session</h3>
   <input id="subject"  placeholder="Subject (e.g. CN Lab)">
   <input id="duration" type="number" placeholder="Duration (minutes)" value="60">
-  <button class="btn-primary" onclick="startSession()">▶ Start Session</button>
+  <button id="start-btn" class="btn-primary" onclick="startSession()">▶ Start Session</button>
   <div id="status-msg"></div>
 </div>
 
@@ -67,7 +69,7 @@ const API  = "https://xrn90564rk.execute-api.ap-south-1.amazonaws.com/prod";
 
 <script>
 const token   = () => sessionStorage.getItem("id_token");
-let sessionId = null, qr = null, timer = null;
+let sessionId = null, qr = null, timer = null, starting = false;
 
 document.getElementById("user-name").textContent =
   sessionStorage.getItem("user_name") || "";
@@ -79,6 +81,12 @@ function logout(){
 function status(t,err=false){
   const el=document.getElementById("status-msg");
   el.style.color=err?"#f87171":"#4ade80"; el.textContent=t;
+}
+
+function esc(s){
+  return String(s ?? "").replace(/[&<>"']/g, c => (
+    {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]
+  ));
 }
 
 async function api(path, opts={}){
@@ -93,19 +101,31 @@ async function api(path, opts={}){
 }
 
 async function startSession(){
+  if(starting) return;               // block double clicks
+  starting = true;
+  const btn = document.getElementById("start-btn");
+  btn.disabled = true;
+  btn.textContent = "Starting...";
+
   const subject  = document.getElementById("subject").value.trim()||"General";
   const duration = document.getElementById("duration").value||60;
   try{
     const d = await api("/sessions",{
       method:"POST",
-      body: JSON.stringify({subject, duration_minutes: duration})
+      body: JSON.stringify({subject, duration_minutes: Number(duration)})
     });
     sessionId = d.session_id;
     status("Session started! QR is live.");
     document.getElementById("qr-box").style.display="block";
     startQrLoop();
     loadReports();
-  }catch(e){ status(e.message,true); }
+  }catch(e){
+    status(e.message,true);
+  }finally{
+    starting = false;
+    btn.disabled = false;
+    btn.textContent = "▶ Start Session";
+  }
 }
 
 async function fetchAndRenderQR(){
@@ -116,7 +136,8 @@ async function fetchAndRenderQR(){
     document.getElementById("qrcode").innerHTML="";
     qr = new QRCode(document.getElementById("qrcode"),{
       text: data, width:240, height:240,
-      colorDark:"#0f172a", colorLight:"#fff"
+      colorDark:"#0f172a", colorLight:"#ffffff",
+      correctLevel: QRCode.CorrectLevel.M
     });
     let left = d.expires_in;
     clearInterval(timer);
@@ -130,14 +151,23 @@ async function fetchAndRenderQR(){
 
 function startQrLoop(){ fetchAndRenderQR(); }
 
+// Close the session currently shown in the QR box
 async function closeSession(){
-  if(!sessionId||!confirm("Close this session?")) return;
+  if(!sessionId) return;
+  await closeById(sessionId);
+}
+
+// Close any session by id (used by the QR box and by each table row)
+async function closeById(sid){
+  if(!confirm("Close this session?")) return;
   try{
-    const d = await api(`/sessions/${sessionId}/close`,{method:"POST"});
+    const d = await api(`/sessions/${sid}/close`,{method:"POST"});
     status(`Closed. Present: ${d.present_count}`);
-    document.getElementById("qr-box").style.display="none";
-    clearInterval(timer);
-    sessionId=null;
+    if(sid === sessionId){
+      document.getElementById("qr-box").style.display="none";
+      clearInterval(timer);
+      sessionId = null;
+    }
     loadReports();
   }catch(e){ status(e.message,true); }
 }
@@ -149,11 +179,17 @@ async function loadReports(){
     const body = document.getElementById("sessions-body");
     body.innerHTML = sessions.map(s=>`
       <tr>
-        <td>${s.subject}</td>
-        <td><span class="badge ${s.status==='ACTIVE'?'active':'closed'}">${s.status}</span></td>
+        <td>${esc(s.subject)}</td>
+        <td><span class="badge ${s.status==='ACTIVE'?'active':'closed'}">${esc(s.status)}</span></td>
         <td>${new Date(s.created_at*1000).toLocaleString()}</td>
-        <td><button class="btn-primary" style="font-size:.75rem;padding:.2rem .6rem"
-            onclick="viewDetail('${s.session_id}')">View</button></td>
+        <td>
+          <button class="btn-primary small-btn"
+            onclick="viewDetail('${esc(s.session_id)}')">View</button>
+          ${s.status==='ACTIVE'
+            ? `<button class="btn-danger small-btn"
+                 onclick="closeById('${esc(s.session_id)}')">Close</button>`
+            : ""}
+        </td>
       </tr>`).join("");
   }catch(e){ console.error(e); }
 }

@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -91,6 +90,7 @@
       color: #fbbf24;
       font-size: 0.85rem;
       overflow-wrap: anywhere;
+      line-height: 1.5;
     }
 
     header {
@@ -270,7 +270,6 @@
         return;
       }
 
-      // Set up Chrome's native QR detector where supported.
       barcodeDetector = null;
 
       try {
@@ -283,13 +282,12 @@
         console.warn("Native detector unavailable:", error);
       }
 
-      // jsQR is our fallback.
       if (!barcodeDetector && typeof jsQR !== "function") {
         scanMsg(
-          "QR scanner failed to load. Check internet and reload.",
+          "QR scanner library failed to load. Check internet and reload.",
           "#f87171"
         );
-        debugMsg("Neither native detector nor jsQR is available.");
+        debugMsg("jsQR and native detector are unavailable.");
         return;
       }
 
@@ -300,8 +298,6 @@
 
       try {
         stopCamera(false);
-
-        // stopCamera increments the generation counter.
         const thisScan = scanGeneration;
 
         stream = await navigator.mediaDevices.getUserMedia({
@@ -372,8 +368,8 @@
 
         debugMsg(
           "Video: " + video.videoWidth + "x" + video.videoHeight +
-          " | Detector: " +
-          (barcodeDetector ? "Chrome native + jsQR" : "jsQR fallback")
+          " | jsQR: " + (typeof jsQR === "function" ? "loaded" : "missing") +
+          " | Native: " + (barcodeDetector ? "available" : "unavailable")
         );
 
         animationId = requestAnimationFrame(
@@ -412,8 +408,8 @@
         ) {
           lastScanTime = timestamp;
 
-          // Resize large frames for faster mobile processing.
-          const scale = Math.min(1, 1200 / video.videoWidth);
+          // Increased resolution cap for better module clarity in jsQR
+          const scale = Math.min(1, 1280 / video.videoWidth);
 
           canvas.width = Math.round(video.videoWidth * scale);
           canvas.height = Math.round(video.videoHeight * scale);
@@ -430,10 +426,40 @@
 
           let decodedText = null;
 
-          // Method 1: Chrome's native QR detector.
-          if (barcodeDetector) {
+          if (typeof jsQR === "function") {
+            const image = context.getImageData(
+              0,
+              0,
+              canvas.width,
+              canvas.height
+            );
+
+            const result = jsQR(
+              image.data,
+              image.width,
+              image.height,
+              {
+                inversionAttempts: "attemptBoth"
+              }
+            );
+
+            if (result && result.data) {
+              decodedText = result.data;
+            }
+          }
+
+          if (
+            !decodedText &&
+            barcodeDetector &&
+            timestamp - lastDebugMessage >= 500
+          ) {
             try {
-              const results = await barcodeDetector.detect(canvas);
+              const results = await Promise.race([
+                barcodeDetector.detect(canvas),
+                new Promise(resolve =>
+                  setTimeout(() => resolve([]), 500)
+                )
+              ]);
 
               if (
                 scanning &&
@@ -452,55 +478,6 @@
             return;
           }
 
-          // Method 2: jsQR fallback.
-          if (!decodedText && typeof jsQR === "function") {
-            try {
-              const image = context.getImageData(
-                0,
-                0,
-                canvas.width,
-                canvas.height
-              );
-
-              const result = jsQR(
-                image.data,
-                image.width,
-                image.height,
-                {
-                  inversionAttempts: "attemptBoth"
-                }
-              );
-
-              if (result && result.data) {
-                decodedText = result.data;
-              }
-            } catch (error) {
-              console.warn("jsQR detection failed:", error);
-            }
-          }
-
-          // Display diagnostics every two seconds.
-          if (
-            !decodedText &&
-            timestamp - lastDebugMessage > 2000
-          ) {
-            lastDebugMessage = timestamp;
-
-            scanMsg(
-              "Camera running. Keep the QR centered and steady.",
-              "#38bdf8"
-            );
-
-            debugMsg(
-              "Frames: " + framesProcessed +
-              " | Image: " + canvas.width + "x" + canvas.height +
-              " | Detector: " +
-              (barcodeDetector ? "Chrome + jsQR" : "jsQR only") +
-              " | QR not detected yet"
-            );
-          }
-
-          // QR decoded: process attendance once.
           if (decodedText && !scanDone) {
             scanDone = true;
             scanning = false;
@@ -525,6 +502,22 @@
 
             await handleQRData(decodedText);
             return;
+          }
+
+          if (timestamp - lastDebugMessage >= 2000) {
+            lastDebugMessage = timestamp;
+
+            scanMsg(
+              "Camera running. Keep the QR centered and steady.",
+              "#38bdf8"
+            );
+
+            debugMsg(
+              "Frames: " + framesProcessed +
+              " | Image: " + canvas.width + "x" + canvas.height +
+              " | jsQR: " + (typeof jsQR === "function" ? "loaded" : "missing") +
+              " | QR not detected"
+            );
           }
         }
       } catch (error) {
@@ -552,9 +545,9 @@
           );
         }
 
-        if (!payload || !payload.token) {
+        if (!payload || !payload.token || !payload.session_id) {
           throw new Error(
-            "QR decoded, but the token field is missing."
+            "QR decoded, but required fields (token/session_id) are missing."
           );
         }
 
@@ -570,7 +563,8 @@
             "Authorization": idToken()
           },
           body: JSON.stringify({
-            token: payload.token
+            token: payload.token,
+            session_id: payload.session_id
           })
         });
 
